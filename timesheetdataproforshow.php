@@ -9,10 +9,6 @@
 *
 ***************************************************************************/
 
-if ($current_user_id == 77){
-	$iterneg = 1;
-}
-
 echo "<table cellpadding=\"15\" style=\"table-layout: fixed; width: 180%\"><tr>";
 foreach($years as $val){	
 	if(empty($arr_output[$val])){
