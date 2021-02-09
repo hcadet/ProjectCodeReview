@@ -53,7 +53,7 @@ foreach($years as $val){
         $chartdivv = "chartdivv_non";			
         $charpiearr_no = $mergednonprojectTimeTotalarrayPieChart_encoden;
         echo "<td><hr>"; 
-        echo "<h1>Non-project Time: </h1><br />";
+        echo "<h1>Non-project Time: </h1>";
         my_piechart($charpiearr_no, $litres, $country, $chartdivv);
         echo "</td>";	
 		
