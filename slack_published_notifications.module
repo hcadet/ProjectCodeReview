@@ -1,0 +1,218 @@
+<?php
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\node\Entity\Node;
+use Drupal\Core\Url;
+
+/**
+* Implements hook_ENTITY_insert() for comment entities.
+*/
+ 
+function slack_published_notifications_entity_insert(EntityInterface $entity) {
+  
+ $configinsert = \Drupal::config('slack_published_notifications.settings');
+  $channelinsert = $configinsert->get('slack_channel');
+  $usernameinsert = $configinsert->get('slack_username');
+  $slack_disable = $configinsert->get('slack_disable_disable'); 
+
+  if ($entity->moderation_state->value == "published" AND $slack_disable == 0) {
+
+   $nid = $entity->content_entity_id->value;   
+   $int_value = intval( $nid );   
+    
+    $node = Node::load($int_value);
+    $page_title = trim($node->title->value);    
+    $language = $entity->langcode->value;
+    $page_url = Url::fromRoute('entity.node.canonical', ['node' => $int_value], ['absolute' => TRUE])->toString();
+    
+    // Insert the new entity into a fictional table of all entities.
+    if($page_title){   
+
+      $connection = \Drupal::service('database');
+      $result = $connection->insert('slack_notifications')
+      ->fields([
+        'nid' => $int_value,
+        'title' => $page_title,
+        'created' => REQUEST_TIME,
+        'url' => $page_url,
+        'notifications_sent' => "FALSE",
+        'language' => $language
+      ])
+      ->execute();
+   
+      $outputvt = "Title:". $page_title . " <a href=".$page_url." > Click Here </a>"; 
+
+      $time = 1800;
+      $current_time = (int) date('Hi');
+       
+      if($current_time > $time) {
+        
+        //Send message
+        \Drupal::service('slack_published_notifications.slack_service')
+        ->sendMessage($outputvt, $channelinsert, $usernameinsert); 
+
+        //Update records in the database
+        $num_updated = $connection->update('slack_notifications')
+        ->fields([
+          'notifications_sent' => "TRUE",        
+        ])
+        ->condition('nid', $int_value, '=')
+        ->condition('language', $language, '=')
+        ->execute();
+
+      }
+          
+   }
+
+  }
+
+}
+
+/**
+* Implements hook_ENTITY_TYPE_update() for comment entities.
+*/
+function slack_published_notifications_node_update(EntityInterface $node) {
+  
+  if ($node instanceof \Drupal\node\NodeInterface) {
+  // You can get nid and anything else you need from the node object.
+    $nid = $node->id();
+  }
+  $int_value = intval($nid);
+  $current_path = \Drupal::service('path.current')->getPath();  
+  $deleting_process = end(explode( "/", $current_path));   
+  if($deleting_process == 'delete'){
+    $deleting_process = end( explode( "/", $current_path));
+  }else{
+    $deleting_process = NULL;
+  }
+   
+    $configupdate = \Drupal::config('slack_published_notifications.settings');
+    $channelupdate = $configupdate->get('slack_channel');
+    $usernameupdate = $configupdate->get('slack_username');
+    $slack_disable = $configupdate->get('slack_disable');  
+    
+  if ($node->moderation_state->value == "published" AND $deleting_process != 'delete' AND $slack_disable == 0) { 
+  
+    $language = $node->langcode->value;    
+    $translation = \Drupal::service('entity.repository')->getTranslationFromContext($node);    
+    if($language == 'en'){
+      $page_title = trim($node->title->value);
+    }elseif($translation->title->value){
+      $page_title = $translation->title->value;      
+    }else{
+      $page_title = trim($node->title->value);
+    }  
+    
+    $page_url = Url::fromRoute('entity.node.canonical', ['node' => $int_value], ['absolute' => TRUE])->toString();
+    $outputvt ="Title: ". $page_title . " <a href=".$page_url."> Click Here </a>";  
+    $connection = \Drupal::service('database');
+    $query = $connection->select('slack_notifications', 's')
+    ->condition('s.nid', $int_value, '=')
+    ->condition('s.language', $language, '=')
+    ->fields('s', ['nid', 'language']); 
+
+    $result = $query->execute();
+    $record = $result->fetchAll();
+
+    $recordLang = $record[0]->language;    
+    //START: Inserts and updates entities in the database.  
+    
+    if($page_title){      
+        
+      if(empty($record) OR trim($recordLang) != trim($language))
+      {
+               
+        $result = $connection->insert('slack_notifications')
+        ->fields([
+          'nid' => $int_value,
+          'title' => $page_title,
+          'created' => REQUEST_TIME,
+          'url' => $page_url,
+          'notifications_sent' => "FALSE",
+          'language' => $language
+        ])
+        ->execute();
+
+      }else {
+        //Update records in the database        
+        $num_updated = $connection->update('slack_notifications')
+        ->fields([
+          'notifications_sent' => "FALSE",        
+        ])
+        ->condition('nid', $int_value, '=')
+        ->condition('language', $language, '=')
+        ->execute();           
+
+      } 
+          
+    }  
+        
+    //Sends message after 6:00PM
+    $time = 1800;
+    $current_time = (int) date('Hi');     
+    if($current_time > $time) {  
+   
+     \Drupal::service('slack_published_notifications.slack_service')
+     ->sendMessage($outputvt, $channelupdate, $usernameupdate); 
+
+    //Update records in the database
+    $num_updated = $connection->update('slack_notifications')
+    ->fields([
+      'notifications_sent' => "TRUE",        
+      ])
+    ->condition('nid', $int_value, '=')
+    ->condition('language', $language, '=')
+    ->execute();
+    }
+    //END: Inserts and updates entities in the database.          
+  }
+  
+ 
+}  
+
+/**
+ * Implements hook_cron().
+ */
+function slack_published_notifications_cron() {
+  $config = \Drupal::config('slack_published_notifications.settings');
+  $channel = $config->get('slack_channel');
+  $username = $config->get('slack_username');
+  $slack_disable = $config->get('slack_disable_disable');
+  
+  if($slack_disable == 0){ 
+    $time = 1800;
+    $current_time = (int) date('Hi');     
+    if($current_time < $time) {  
+
+      $database = \Drupal::service('database');
+      $query = $database->select('slack_notifications', 's')
+      ->condition('s.notifications_sent', 'FALSE', '=')
+      ->fields('s',['nid', 'title', 'created', 'url', 'notifications_sent', 'language']);
+      $result = $query->execute()->fetchAll(); 
+        
+      $theMessage = NULL;
+      if(!empty($result)){
+        foreach ($result as $record) { 
+          // Convert to array and prepare message.." =
+          $arrayConversion = json_decode(json_encode($record), true);        
+          $theMessagev2 .= $arrayConversion['title'] ." URL: <".$arrayConversion['url']."| Click Here>\n";         
+          //Update records in the database
+          $num_updated = $database->update('slack_notifications')
+          ->fields([
+            'notifications_sent' => "TRUE",        
+          ])
+          ->condition('nid', $arrayConversion['nid'], '=')
+          ->condition('language', $arrayConversion['language'], '=')
+          ->execute();
+        }     
+        $theMessageString = implode(" ", $theMessage);
+        $theMessageslack = $theMessagev2;
+          
+         \Drupal::service('slack_published_notifications.slack_service')
+         ->sendMessage($theMessageslack, $channel, $username);    
+     } 
+    }  
+  } 
+}
+    
+?>
